@@ -45,6 +45,14 @@ if(MSVC AND MSVC_VERSION GREATER 1500)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
 endif()
 
+#--------------------------------------------------------------------------------
+# debug
+#--------------------------------------------------------------------------------
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+  add_definitions(-DNO_LIMA_DEBUG)
+endif()
+
+
 if(UNIX)
 #--------------------------------------------------------------------------------
 # Spec-like shared memory
