@@ -26,6 +26,8 @@
 #include <sstream>
 #ifdef __unix
 #include <sys/sysinfo.h>
+#include <numaif.h>
+#include <sys/mman.h>
 #ifdef __SSE2__
 #include <emmintrin.h>
 #endif
@@ -151,13 +153,11 @@ MemBuffer::MemBuffer(const MemBuffer& buffer)
 
 MemBuffer::~MemBuffer()
 {
-	if (!m_size)
-		// Function assumed not to throw an exception but does...
-		throw LIMA_COM_EXC(Error, "Deleting empty buffer");
-	release();
+	if (m_size)
+		release();
 }
 
-void MemBuffer::alloc(int size)
+void MemBuffer::alloc(int& size)
 {
 	if (m_size == size)
 		return;
@@ -165,14 +165,30 @@ void MemBuffer::alloc(int size)
 	release();
 
 #ifdef __unix
-	int ret = posix_memalign(&m_ptr, Alignment, size);
-	if (ret != 0)
-		throw LIMA_COM_EXC(Error, "Error in posix_memalign: ")
-			<< strerror(ret);
+	int aligned_size = getPageAlignedSize(size);
+	if (useMmap(aligned_size)) {
+		size = aligned_size;
+		m_ptr = (char *) mmap(0, size, PROT_READ | PROT_WRITE,
+				      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (!m_ptr)
+			throw LIMA_COM_EXC(Error, "Error in mmap: ")
+				<< strerror(errno);
+		unsigned long node_mask = 0x1;
+		int max_node = 3;
+		if (node_mask && max_node) {
+			int ret = mbind(m_ptr, size, MPOL_BIND, &node_mask, 
+					max_node, 0);
+		}
+	} else {
+		int ret = posix_memalign(&m_ptr, Alignment, size);
+		if (ret != 0)
+			throw LIMA_COM_EXC(Error, "Error in posix_memalign: ")
+				<< strerror(ret);
+	}
 #else
 	m_ptr = _aligned_malloc(size,Alignment);
-	if(!m_ptr)
-	  throw LIMA_COM_EXC(Error, "Error in _aligned_malloc: NULL pointer return");
+	if (!m_ptr)
+		throw LIMA_COM_EXC(Error, "Error in _aligned_malloc: NULL pointer return");
 #endif
 	m_size = size;
 }
@@ -190,7 +206,10 @@ void MemBuffer::release()
 		return;
 
 #ifdef __unix
-	free(m_ptr);
+	if (useMmap(m_size))
+		munmap(m_ptr, m_size);
+	else
+		free(m_ptr);
 #else
 	_aligned_free(m_ptr);
 #endif
@@ -207,4 +226,14 @@ MemBuffer& MemBuffer::operator =(const MemBuffer& buffer)
 void MemBuffer::clear()
 {
 	ClearBuffer(getPtr(), 1, FrameDim(getSize(), 1, Bpp8));
+}
+
+int MemBuffer::getPageAlignedSize(int size)
+{
+	int page_size;
+	GetPageSize(page_size);
+	int misaligned = size & (page_size - 1);
+	if (misaligned)
+		size += page_size - misaligned;
+	return size;
 }
