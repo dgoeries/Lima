@@ -49,7 +49,7 @@ endif()
 # debug
 #--------------------------------------------------------------------------------
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
-  add_definitions(-DNO_LIMA_DEBUG)
+  add_definitions(-DLIMA_NO_DEBUG)
 endif()
 
 
