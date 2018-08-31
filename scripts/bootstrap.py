@@ -366,8 +366,7 @@ class CMakeOptions:
 class GitHelper:
 
 	not_submodules = (
-		'git', 'python', 'tests', 'test', 'cbf', 'lz4', 'fits', 'gz', 
-		'tiff', 'hdf5'
+		'python', 'tests', 'cbf', 'lz4', 'fits', 'gz', 'tiff', 'hdf5',
 	)
 
 	submodule_map = {
@@ -440,7 +439,7 @@ def build_install_lima(cfg):
 
 	cmake_cmd = cmake_opts.get_build_options()
 	exec_cmd(cmake_cmd, ('CMake could not build Lima. ' + 
-			     'Pleae contact lima@esrf.fr for help.'))
+			     'Please contact lima@esrf.fr for help.'))
 
 	if not cfg.is_install_required():
 		return

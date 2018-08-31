@@ -51,7 +51,6 @@ enum DebType {
 	DebTypeAlways		= 1 << 7,
 };
 
-
 enum DebFormat {
 	DebFmtDateTime		= 1 << 0,
 	DebFmtThread		= 1 << 1,
@@ -158,6 +157,7 @@ class LIMACORE_API DebParams
 	bool checkModule() const;
 	bool checkType(DebType type) const;
 
+	static void checkTypeFlags(Flags& type_flags);
 	static void setTypeFlags(Flags type_flags);
 	static Flags getTypeFlags();
 
@@ -238,8 +238,8 @@ class LIMACORE_API DebProxy
 {
  public:
 	DebProxy();
-	DebProxy(DebObj *deb_obj, DebType type, ConstStr file_name, 
-		 int line_nr);
+	DebProxy(DebObj *deb_obj, DebType type, ConstStr funct_name, 
+		 ConstStr file_name, int line_nr);
 	DebProxy(const DebProxy& p);
 	~DebProxy();
 
@@ -251,20 +251,6 @@ class LIMACORE_API DebProxy
  private:
 	mutable AutoMutex *m_lock;
 };
-
-/*------------------------------------------------------------------
- *  class DebSink
- *------------------------------------------------------------------*/
-
-class LIMACORE_API DebSink
-{
- public:
-  	DebSink() {};
-
-	template <class T> 
-	  const DebSink& operator <<(const T&) const {return *this;}
-};
-
 
 /*------------------------------------------------------------------
  *  class DebObj
@@ -299,7 +285,10 @@ class LIMACORE_API DebObj
 		ThreadData() : indent(-1) {}
 	} ThreadData;
 	
-	void heading(DebType type, ConstStr file_name, int line_nr);
+	static void heading(DebType type, ConstStr funct_name, 
+			    ConstStr file_name, int line_nr,
+			    DebObj *deb = NULL);
+
 	static ThreadData *getThreadData();
 	static void deleteThreadData(void *thread_data);
 
@@ -398,7 +387,6 @@ inline bool DebParams::checkType(DebType type) const
 	return DebHasFlag(s_type_flags, type); 
 }
 
-
 /*------------------------------------------------------------------
  *  class DebProxy inline functions
  *------------------------------------------------------------------*/
@@ -408,12 +396,16 @@ inline DebProxy::DebProxy()
 {
 }
 
-inline DebProxy::DebProxy(DebObj *deb_obj, DebType type, ConstStr file_name, 
-			  int line_nr)
+inline DebProxy::DebProxy(DebObj *deb_obj, DebType type, ConstStr funct_name,
+			  ConstStr file_name, int line_nr)
 {
+#ifdef LIMA_NO_DEBUG
+	DebParams::checkInit();
+#endif
+
 	AutoMutex lock(*DebParams::s_mutex);
 
-	deb_obj->heading(type, file_name, line_nr);
+	DebObj::heading(type, funct_name, file_name, line_nr, deb_obj);
 
 	m_lock = new AutoMutex(lock);
 }
@@ -495,7 +487,7 @@ inline DebParams& DebObj::getDebParams()
 inline DebProxy DebObj::write(DebType type, ConstStr file_name, int line_nr)
 {
 	if (checkAny(type))
-		return DebProxy(this, type, file_name, line_nr);
+		return DebProxy(this, type, m_funct_name, file_name, line_nr);
 	else
 		return DebProxy();
 }
@@ -506,24 +498,27 @@ inline DebProxy DebObj::write(DebType type, ConstStr file_name, int line_nr)
  *  debug macros
  *------------------------------------------------------------------*/
 
+#define DEB_NOP()		do {} while (0)
+
 #define DEB_GLOBAL_NAMESPC(mod, name_space)				\
 	inline lima::DebParams& getDebParams()				\
 	{								\
-		static lima::DebParams *deb_params = NULL;			\
-		EXEC_ONCE(deb_params = new lima::DebParams(lima::mod, NULL,		\
-						     name_space));	\
+		static lima::DebParams *deb_params = NULL;		\
+		EXEC_ONCE(deb_params = new lima::DebParams(lima::mod, NULL,\
+							   name_space)); \
 		return *deb_params;					\
 	}
 
 #define DEB_GLOBAL(mod)							\
 	DEB_GLOBAL_NAMESPC(mod, NULL)
 
-#define DEB_STRUCT_NAMESPC(mod, struct_name, name_space)			\
+#define DEB_STRUCT_NAMESPC(mod, struct_name, name_space)		\
 	static lima::DebParams& getDebParams()				\
 	{								\
-		static lima::DebParams *deb_params = NULL;			\
-		EXEC_ONCE(deb_params = new lima::DebParams(lima::mod, struct_name,	\
-						     name_space));	\
+		static lima::DebParams *deb_params = NULL;		\
+		EXEC_ONCE(deb_params = new lima::DebParams(lima::mod,	\
+							   struct_name, \
+							   name_space)); \
 		return *deb_params;					\
 	}								\
 									\
@@ -532,7 +527,7 @@ inline DebProxy DebObj::write(DebType type, ConstStr file_name, int line_nr)
 		m_deb_obj_name = obj_name;				\
 	}								\
 									\
-	lima::ConstStr getDebObjName() const					\
+	lima::ConstStr getDebObjName() const				\
 	{								\
 		if (m_deb_obj_name.empty())				\
 			return NULL;					\
@@ -548,21 +543,21 @@ inline DebProxy DebObj::write(DebType type, ConstStr file_name, int line_nr)
 #define DEB_CLASS(mod, class_name)					\
 	DEB_CLASS_NAMESPC(mod, class_name, NULL)
 
-#ifndef NO_LIMA_DEBUG
+#ifndef LIMA_NO_DEBUG
 
 #define DEB_GLOBAL_FUNCT()						\
-	lima::DebObj deb(getDebParams(), false, __FUNCTION__,			\
+	lima::DebObj deb(getDebParams(), false, __FUNCTION__,		\
 		   NULL, __FILE__, __LINE__)
 
 #define DEB_CONSTRUCTOR()						\
 	DEB_MEMBER_FUNCT()
 
 #define DEB_DESTRUCTOR()						\
-	lima::DebObj deb(getDebParams(), true, __FUNCTION__,			\
+	lima::DebObj deb(getDebParams(), true, __FUNCTION__,		\
 		   getDebObjName(), __FILE__, __LINE__)
 
 #define DEB_MEMBER_FUNCT()						\
-	lima::DebObj deb(getDebParams(), false, __FUNCTION__,			\
+	lima::DebObj deb(getDebParams(), false, __FUNCTION__,		\
 		   getDebObjName(), __FILE__, __LINE__)
 
 #define DEB_PTR()							\
@@ -574,19 +569,61 @@ inline DebProxy DebObj::write(DebType type, ConstStr file_name, int line_nr)
 #define DEB_STATIC_FUNCT()						\
 	DEB_GLOBAL_FUNCT()
 
-#define DEB_SET_OBJ_NAME(n) \
+#define DEB_SET_OBJ_NAME(n)						\
 	setDebObjName(n)
 
 
-#define DEB_MSG(type)	deb.write(type, __FILE__, __LINE__)
+#define DEB_MSG(type)		deb.write(type, __FILE__, __LINE__)
 
-#define DEB_FATAL()	DEB_MSG(lima::DebTypeFatal)
-#define DEB_ERROR()	DEB_MSG(lima::DebTypeError)
-#define DEB_WARNING()	DEB_MSG(lima::DebTypeWarning)
-#define DEB_TRACE()	DEB_MSG(lima::DebTypeTrace)
-#define DEB_PARAM()	DEB_MSG(lima::DebTypeParam)
-#define DEB_RETURN()	DEB_MSG(lima::DebTypeReturn)
-#define DEB_ALWAYS()	DEB_MSG(lima::DebTypeAlways)
+#define DEB_FATAL()		DEB_MSG(lima::DebTypeFatal)
+#define DEB_ERROR()		DEB_MSG(lima::DebTypeError)
+#define DEB_WARNING()		DEB_MSG(lima::DebTypeWarning)
+#define DEB_TRACE()		DEB_MSG(lima::DebTypeTrace)
+#define DEB_PARAM()		DEB_MSG(lima::DebTypeParam)
+#define DEB_RETURN()		DEB_MSG(lima::DebTypeReturn)
+#define DEB_ALWAYS()		DEB_MSG(lima::DebTypeAlways)
+
+#define DEB_OBJ_NAME(o)							\
+	((o)->getDebObjName())
+
+#define DEB_CHECK_ANY(type)	deb.checkAny(type)
+
+#else // LIMA_NO_DEBUG
+
+#define DEB_GLOBAL_FUNCT()	DEB_NOP()
+#define DEB_CONSTRUCTOR()	DEB_NOP()
+#define DEB_DESTRUCTOR()	DEB_NOP()
+#define DEB_MEMBER_FUNCT()	DEB_NOP()
+
+#define DEB_PTR()		NULL
+#define DEB_FROM_PTR(deb_ptr)	DEB_NOP()
+#define DEB_STATIC_FUNCT()	DEB_NOP()
+#define DEB_SET_OBJ_NAME(n)	DEB_NOP()
+
+#define DEB_OUT_MSG(type)						\
+	DebProxy(NULL, type, __FUNCTION__, __FILE__, __LINE__)
+#define DEB_NO_MSG()							\
+	DebProxy()
+
+#define DEB_FATAL()		DEB_OUT_MSG(lima::DebTypeFatal)
+#define DEB_ERROR()		DEB_OUT_MSG(lima::DebTypeError)
+#define DEB_WARNING()		DEB_OUT_MSG(lima::DebTypeWarning)
+#define DEB_TRACE()		DEB_NO_MSG()
+#define DEB_PARAM()		DEB_NO_MSG()
+#define DEB_RETURN()		DEB_NO_MSG()
+#define DEB_ALWAYS()		DEB_OUT_MSG(lima::DebTypeAlways)
+
+#define DEB_OBJ_NAME(o)		NULL
+
+#define DEB_IGNORED_TYPE_FLAGS						\
+	(lima::DebTypeTrace | lima::DebTypeFunct | lima::DebTypeParam | \
+	 lima::DebTypeReturn)
+
+#define DEB_CHECK_ANY(type)						\
+	(((type) == lima::DebTypeFatal) || ((type) == lima::DebTypeError) || \
+	 ((type) == lima::DebTypeWarning) || ((type) == lima::DebTypeAlways))
+
+#endif // LIMA_NO_DEBUG
 
 #define DEB_HEX(x)	DebHex(x)
 
@@ -605,44 +642,22 @@ inline DebProxy DebObj::write(DebType type, ConstStr file_name, int line_nr)
 #define DEB_VAR7(v1, v2, v3, v4, v5, v6, v7)	\
 	DEB_VAR6(v1, v2, v3, v4, v5, v6) << ", " << #v7 << "=" << v7
 
-#define DEB_OBJ_NAME(o) \
-	((o)->getDebObjName())
 
-#define DEB_CHECK_ANY(type)	deb.checkAny(type)
+/*------------------------------------------------------------------
+ *  DebParams checkTypeFlags
+ *------------------------------------------------------------------*/
 
-#else //NO_LIMA_DEBUG
-
-#define DEB_GLOBAL_FUNCT() lima::DebSink deb
-#define DEB_CONSTRUCTOR() lima::DebSink deb
-#define DEB_DESTRUCTOR()  lima::DebSink deb
-#define DEB_MEMBER_FUNCT() lima::DebSink deb
-
-#define DEB_PTR()	NULL
-#define DEB_FROM_PTR(deb_ptr) lima::DebSink deb
-#define DEB_STATIC_FUNCT() DEB_GLOBAL_FUNCT()
-#define DEB_SET_OBJ_NAME(n)
-
-#define DEB_MSG(type) 	deb
-#define DEB_FATAL()	deb
-#define DEB_ERROR()	deb
-#define DEB_WARNING()	deb
-#define DEB_TRACE()	deb
-#define DEB_PARAM()	deb
-#define DEB_RETURN()	deb
-#define DEB_ALWAYS()	deb
-#define DEB_HEX(x)				""
-#define DEB_VAR1(v1)				""
-#define DEB_VAR2(v1, v2)			""
-#define DEB_VAR3(v1, v2, v3)			""
-#define DEB_VAR4(v1, v2, v3, v4)		""
-#define DEB_VAR5(v1, v2, v3, v4, v5)		""
-#define DEB_VAR6(v1, v2, v3, v4, v5, v6)	""
-#define DEB_VAR7(v1, v2, v3, v4, v5, v6, v7)	""
-
-#define DEB_OBJ_NAME(o)
-
-#define DEB_CHECK_ANY(type)	0
-
-#endif //NO_LIMA_DEBUG
+#ifdef LIMA_NO_DEBUG
+inline void lima::DebParams::checkTypeFlags(Flags& type_flags)
+{
+	if (type_flags & DEB_IGNORED_TYPE_FLAGS) {
+		DEB_WARNING() << "Ignored type flags: Trace|Funct|Param|Return";
+		type_flags &= ~DEB_IGNORED_TYPE_FLAGS;
+	}
+}
+#else
+inline void lima::DebParams::checkTypeFlags(Flags&)
+{}
+#endif
 
 #endif // DEBUG_H
